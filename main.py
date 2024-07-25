@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 import os
-from dotenv import *
+from dotenv import load_dotenv
 import requests
 import pytz
 
@@ -8,9 +8,35 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+def setupGoogleCalendar():
+    if not os.path.exists("credentials.json"):
+        raise Exception("No credentials.json file found, please create one and try again.")
+    with open("credentials.json", "r") as cred_file:
+        if len(cred_file.read()) == 0:
+            raise Exception("The credentials.json file is empty, create your own and try again.") 
+    
+    creds = None
+    # The file token.json stores the user's access and refresh tokens, and is
+    # created automatically when the authorization flow completes for the first
+    # time.
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
+    return build("calendar", "v3", credentials=creds)
 
 def getBearerToken():
     data = {
@@ -91,7 +117,7 @@ def convertSchedule(schedule):
     start_date = datetime(1900, 1, 1)
 
     # Convert Timezone so it can be used in the datetime object
-    convertedTimezone = pytz.timezone(timezone)
+    convertedTimezone = pytz.timezone(eventTimezone)
 
     for entry in schedule:
         converted_date = start_date + timedelta(days=entry[0])        
@@ -163,11 +189,11 @@ def saveToGoogleCalendar(service, convertedSchedule):
                 'summary': eventSummary,
                 'start': {
                     'dateTime': schedule[0],
-                    'timeZone': timezone,
+                    'timeZone': eventTimezone,
                 },
                 'end': {
                     'dateTime': schedule[1],
-                    'timeZone': timezone,
+                    'timeZone': eventTimezone,
                 },
                 'colorId': 10,
                 'description': description,
@@ -178,75 +204,13 @@ def saveToGoogleCalendar(service, convertedSchedule):
             event = service.events().insert(calendarId='primary', body=event).execute()
             print('Event created: %s' % (event.get('htmlLink')))
 
-def setupGoogleCalendar():
-    """Shows basic usage of the Google Calendar API.
-    Prints the start and name of the next 10 events on the user's calendar.
-    """
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-    return build("calendar", "v3", credentials=creds)
-
-def addColleagues(token, schedule):
-    for workDay in schedule:  
-        # Convert dateTime to YYYY-MM-DD
-        date = workDay[0].split('T')[0]
-        
-        headers = {
-            'authorization': 'Bearer '+token
-        }
-
-        params = {
-            'departmentId': '-1',
-            'scheduledOnly': 'true',
-        }
-
-        response = requests.get(
-            'https://server.manus.plus/' + os.getenv('company_name') + '/api/node/' + nodeId + '/schedule/' +date,
-            params=params,
-            headers=headers,
-        )
-        
-        response_data = response.json()
-        
-        collegesWithWorkTimes = []
-        
-        schedule_data = response_data['schedule']
-        for collegeData in schedule_data:
-            college = []
-            if collegeData.get('entries'):
-                for collegeEntry in collegeData['entries']:
-                    if collegeEntry.get('noteId'):
-                        college.append(collegeEntry['noteId'])
-            else:
-                continue
-            
-            
-            
-            
-
 if __name__ == "__main__":
     try:
         # Load the environment variables
         load_dotenv()
 
-        global timezone 
-        timezone = os.getenv('event_timezone')
+        global eventTimezone 
+        eventTimezone = os.getenv('event_timezone')
         global eventSummary 
         eventSummary = os.getenv('event_summary')
         global eventLocation
@@ -257,7 +221,7 @@ if __name__ == "__main__":
 
         # Get the bearer token
         token = getBearerToken()
-        
+
         # Get the user information about the company id and the user id
         getUserInformation(token)
 
@@ -275,8 +239,39 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
+# def addColleagues(token, schedule):
+#     for workDay in schedule:  
+#         # Convert dateTime to YYYY-MM-DD
+#         date = workDay[0].split('T')[0]
+        
+#         headers = {
+#             'authorization': 'Bearer '+token
+#         }
 
+#         params = {
+#             'departmentId': '-1',
+#             'scheduledOnly': 'true',
+#         }
 
+#         response = requests.get(
+#             'https://server.manus.plus/' + os.getenv('company_name') + '/api/node/' + nodeId + '/schedule/' +date,
+#             params=params,
+#             headers=headers,
+#         )
+        
+#         response_data = response.json()
+        
+#         collegesWithWorkTimes = []
+        
+#         schedule_data = response_data['schedule']
+#         for collegeData in schedule_data:
+#             college = []
+#             if collegeData.get('entries'):
+#                 for collegeEntry in collegeData['entries']:
+#                     if collegeEntry.get('noteId'):
+#                         college.append(collegeEntry['noteId'])
+#             else:
+#                 continue
 
 
 
