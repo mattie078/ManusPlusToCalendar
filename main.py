@@ -81,39 +81,37 @@ def getUserInformation(token):
 
 def getWorkweeks(token, week_amount):
     schedule = []
-    current_year = datetime.now().isocalendar()[0]
-    current_week = datetime.now().isocalendar()[1]
 
     headers = {
-        'authorization': 'Bearer '+token,    
+        'authorization': 'Bearer ' + token,
     }
 
     global hourRate
     hourRate = 0
 
-    for i in range(0, week_amount):
+    for i in range(week_amount):
+        adjusted_date = datetime.now() + timedelta(weeks=i)
+        year, week, _ = adjusted_date.isocalendar()
+
         response = requests.get(
-            'https://server.manus.plus/' + os.getenv('company_name') + '/api/node/' + nodeId + '/employee/' + employeeId + '/schedule/' + str(current_year) + '/' + str(current_week+i) +'/fromData',
+            f'https://server.manus.plus/{os.getenv("company_name")}/api/node/{nodeId}/employee/{employeeId}/schedule/{year}/{week}/fromData',
             headers=headers,
         )
         weekData = response.json()
 
         if weekData.get('message'):
-            print(f"Failed to get schedule for week {current_week+i}: {weekData['message']}")
+            print(f"Failed to get schedule for week {week}: {weekData['message']}")
             continue
-        
         if not weekData.get('contracts'):
-            print(f"No contracts found for week {current_week+i}")
+            print(f"No contracts found for week {week}")
             continue
-        
         if not weekData.get('schedule'):
-            print(f"No schedule found for week {current_week+i}")
+            print(f"No schedule found for week {week}")
             continue
 
         weekContract = weekData['contracts'][0]
         if hourRate == 0 and weekContract.get('hourRate'):
             hourRate = weekContract['hourRate']
-            
         weekSchedule = weekData['schedule']
         for workDay in weekSchedule:
             if workDay.get('entries'):
