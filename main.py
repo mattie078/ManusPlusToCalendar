@@ -189,10 +189,23 @@ def saveToGoogleCalendar(service, convertedSchedule):
                     break
 
                 if eventStartDate == startDate and eventEndDate == endDate:
-                    print('Event already exists, skipping: %s' % (event.get('htmlLink')))
-                    break
+                    eventStartTime = datetime.fromisoformat(event['start']['dateTime']).time() if event['start'].get('dateTime') else None
+                    eventEndTime = datetime.fromisoformat(event['end']['dateTime']).time() if event['end'].get('dateTime') else None
+                    scheduleStartTime = datetime.fromisoformat(schedule[0]).time()
+                    scheduleEndTime = datetime.fromisoformat(schedule[1]).time()
+                    
+                    if eventStartTime == scheduleStartTime and eventEndTime == scheduleEndTime:
+                        print('Event already exists, skipping: %s' % (event.get('htmlLink')))
+                        break
+                    else:
+                        print('Event has different start or end time, updating: %s' % (event.get('htmlLink')))
+                        event['start']['dateTime'] = schedule[0]
+                        event['end']['dateTime'] = schedule[1]
+                        event['description'] = calculateWageForEvent(hourRate, schedule[2])
+                        service.events().update(calendarId='primary', eventId=event['id'], body=event).execute()
+                        break
         else:
-            description = '' if hourRate == 0 else '€ ' + str(float(hourRate) * float(schedule[2]))
+            description = calculateWageForEvent(hourRate, schedule[2])
                        
             event = {
                 'summary': eventSummary,
@@ -212,6 +225,9 @@ def saveToGoogleCalendar(service, convertedSchedule):
             # Insert the event
             event = service.events().insert(calendarId='primary', body=event).execute()
             print('Event created: %s' % (event.get('htmlLink')))
+
+def calculateWageForEvent(hourRate, duration):
+    return '' if hourRate == 0 else '€ {:.2f}'.format(float(hourRate) * float(duration))
 
 if __name__ == "__main__":
     try:
