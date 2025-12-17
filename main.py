@@ -11,6 +11,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
+EXTRA_SUNDAY_PERCENTAGE = 0.5
 
 def getGoogleCreds():
     flow = InstalledAppFlow.from_client_secrets_file(
@@ -205,7 +206,11 @@ def saveToGoogleCalendar(service, convertedSchedule):
                         service.events().update(calendarId='primary', eventId=event['id'], body=event).execute()
                         break
         else:
-            description = calculateWageForEvent(hourRate, schedule[2])
+            # Check if the event is on a Sunday and apply extra percentage if needed
+            currentHourRate = hourRate
+            if datetime.fromisoformat(schedule[0]).weekday() == 6: # Sunday
+                currentHourRate = hourRate * (1 + EXTRA_SUNDAY_PERCENTAGE)
+            description = calculateWageForEvent(currentHourRate, schedule[2])
                        
             event = {
                 'summary': eventSummary,
