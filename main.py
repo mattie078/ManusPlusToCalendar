@@ -12,6 +12,7 @@ from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EXTRA_SUNDAY_PERCENTAGE = 0.5
+AVAILABILITY_CONFLICT_FIELDS = ['unavailability', 'illness', 'vacation', 'holiday']
 
 def getGoogleCreds():
     flow = InstalledAppFlow.from_client_secrets_file(
@@ -80,6 +81,16 @@ def getUserInformation(token):
     nodeId = information_data['nodeId']
     employeeId = information_data['employeeId']
 
+def getAvailabilityConflicts(workDay, entry):
+    """Return list of (field, period) tuples where the entry overlaps an absence period."""
+    conflicts = []
+    for field in AVAILABILITY_CONFLICT_FIELDS:
+        for period in workDay.get(field, []):
+            # Overlap when entry starts before period ends AND entry ends after period starts
+            if entry['startTime'] < period['endTime'] and entry['endTime'] > period['startTime']:
+                conflicts.append((field, period))
+    return conflicts
+
 def getWorkweeks(token, week_amount):
     schedule = []
 
@@ -117,7 +128,8 @@ def getWorkweeks(token, week_amount):
         for workDay in weekSchedule:
             if workDay.get('entries'):
                 for entry in workDay['entries']:
-                    schedule.append([entry['fromDate'], entry['startTime'], entry['endTime'], entry['totalTime']])
+                    conflicts = getAvailabilityConflicts(workDay, entry)
+                    schedule.append([entry['fromDate'], entry['startTime'], entry['endTime'], entry['totalTime'], conflicts])
     return schedule
 
 def convertSchedule(schedule):
@@ -158,6 +170,8 @@ def convertSchedule(schedule):
 
             workTimes.append(isoFormatStr)
         
+        # Pass conflicts through unchanged (index 4 of raw entry)
+        workTimes.append(entry[4] if len(entry) > 4 else [])
         convertedSchedule.append(workTimes)
 
     return convertedSchedule
@@ -195,23 +209,35 @@ def saveToGoogleCalendar(service, convertedSchedule):
                     scheduleStartTime = datetime.fromisoformat(schedule[0]).time()
                     scheduleEndTime = datetime.fromisoformat(schedule[1]).time()
                     
+                    conflicts = schedule[3] if len(schedule) > 3 else []
+                    expectedDescription = buildEventDescription(hourRate, schedule[2], conflicts)
+                    expectedColorId = '5' if conflicts else '10'
+
                     if eventStartTime == scheduleStartTime and eventEndTime == scheduleEndTime:
-                        print('Event already exists, skipping: %s' % (event.get('htmlLink')))
+                        if event.get('description') == expectedDescription and event.get('colorId') == expectedColorId:
+                            print('Event already exists, skipping: %s' % (event.get('htmlLink')))
+                        else:
+                            print('Event description or color changed, updating: %s' % (event.get('htmlLink')))
+                            event['description'] = expectedDescription
+                            event['colorId'] = expectedColorId
+                            service.events().update(calendarId='primary', eventId=event['id'], body=event).execute()
                         break
                     else:
                         print('Event has different start or end time, updating: %s' % (event.get('htmlLink')))
                         event['start']['dateTime'] = schedule[0]
                         event['end']['dateTime'] = schedule[1]
-                        event['description'] = calculateWageForEvent(hourRate, schedule[2])
+                        event['description'] = expectedDescription
+                        event['colorId'] = expectedColorId
                         service.events().update(calendarId='primary', eventId=event['id'], body=event).execute()
                         break
         else:
+            conflicts = schedule[3] if len(schedule) > 3 else []
             # Check if the event is on a Sunday and apply extra percentage if needed
             currentHourRate = hourRate
             if datetime.fromisoformat(schedule[0]).weekday() == 6: # Sunday
                 currentHourRate = hourRate * (1 + EXTRA_SUNDAY_PERCENTAGE)
-            description = calculateWageForEvent(currentHourRate, schedule[2])
-                       
+            description = buildEventDescription(currentHourRate, schedule[2], conflicts)
+
             event = {
                 'summary': eventSummary,
                 'start': {
@@ -222,7 +248,7 @@ def saveToGoogleCalendar(service, convertedSchedule):
                     'dateTime': schedule[1],
                     'timeZone': eventTimezone,
                 },
-                'colorId': 10,
+                'colorId': '5' if conflicts else '10',
                 'description': description,
                 'location': eventLocation,
             }
@@ -233,6 +259,20 @@ def saveToGoogleCalendar(service, convertedSchedule):
 
 def calculateWageForEvent(hourRate, duration):
     return '' if hourRate == 0 else '€ {:.2f}'.format(float(hourRate) * float(duration))
+
+def buildEventDescription(hourRate, duration, conflicts):
+    parts = []
+    wage = calculateWageForEvent(hourRate, duration)
+    if wage:
+        parts.append(wage)
+    if conflicts:
+        conflict_parts = []
+        for field, period in conflicts:
+            p_start = f"{int(period['startTime']) // 60:02d}:{int(period['startTime']) % 60:02d}"
+            p_end = f"{int(period['endTime']) // 60:02d}:{int(period['endTime']) % 60:02d}"
+            conflict_parts.append(f"{field} {p_start}-{p_end}")
+        parts.append("Not available: " + ", ".join(conflict_parts))
+    return "\n".join(parts)
 
 if __name__ == "__main__":
     try:
@@ -261,47 +301,9 @@ if __name__ == "__main__":
         # Convert schedule to normal datetime format
         convertedSchedule = convertSchedule(rawSchedule)
 
-        # convertedScheduleWithColleagues = addColleagues(token, convertedSchedule)
-
         # Save the schedule to Google Calendar
         saveToGoogleCalendar(service, convertedSchedule)
 
     except Exception as e:
         print(e)
-
-# def addColleagues(token, schedule):
-#     for workDay in schedule:  
-#         # Convert dateTime to YYYY-MM-DD
-#         date = workDay[0].split('T')[0]
-        
-#         headers = {
-#             'authorization': 'Bearer '+token
-#         }
-
-#         params = {
-#             'departmentId': '-1',
-#             'scheduledOnly': 'true',
-#         }
-
-#         response = requests.get(
-#             'https://server.manus.plus/' + os.getenv('company_name') + '/api/node/' + nodeId + '/schedule/' +date,
-#             params=params,
-#             headers=headers,
-#         )
-        
-#         response_data = response.json()
-        
-#         collegesWithWorkTimes = []
-        
-#         schedule_data = response_data['schedule']
-#         for collegeData in schedule_data:
-#             college = []
-#             if collegeData.get('entries'):
-#                 for collegeEntry in collegeData['entries']:
-#                     if collegeEntry.get('noteId'):
-#                         college.append(collegeEntry['noteId'])
-#             else:
-#                 continue
-
-
 
