@@ -180,6 +180,11 @@ def saveToGoogleCalendar(service, convertedSchedule):
     existingEvents = service.events().list(calendarId='primary', timeMin=convertedSchedule[0][0], timeMax=convertedSchedule[-1][1]).execute()
     
     for schedule in convertedSchedule:
+        # Apply the extra Sunday percentage once so both the create and update paths use the same rate
+        currentHourRate = hourRate
+        if datetime.fromisoformat(schedule[0]).weekday() == 6: # Sunday
+            currentHourRate = hourRate * (1 + EXTRA_SUNDAY_PERCENTAGE)
+
         # Check if the event is already in the calendar from the day before the first event to the day after the last event
         for event in existingEvents['items']:
             # Check if the event has the required fields to compare
@@ -210,7 +215,7 @@ def saveToGoogleCalendar(service, convertedSchedule):
                     scheduleEndTime = datetime.fromisoformat(schedule[1]).time()
                     
                     conflicts = schedule[3] if len(schedule) > 3 else []
-                    expectedDescription = buildEventDescription(hourRate, schedule[2], conflicts)
+                    expectedDescription = buildEventDescription(currentHourRate, schedule[2], conflicts)
                     expectedColorId = '5' if conflicts else '10'
 
                     if eventStartTime == scheduleStartTime and eventEndTime == scheduleEndTime:
@@ -232,10 +237,6 @@ def saveToGoogleCalendar(service, convertedSchedule):
                         break
         else:
             conflicts = schedule[3] if len(schedule) > 3 else []
-            # Check if the event is on a Sunday and apply extra percentage if needed
-            currentHourRate = hourRate
-            if datetime.fromisoformat(schedule[0]).weekday() == 6: # Sunday
-                currentHourRate = hourRate * (1 + EXTRA_SUNDAY_PERCENTAGE)
             description = buildEventDescription(currentHourRate, schedule[2], conflicts)
 
             event = {
