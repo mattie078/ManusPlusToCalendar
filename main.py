@@ -259,13 +259,18 @@ def saveToGoogleCalendar(service, convertedSchedule):
             print('Event created: %s' % (event.get('htmlLink')))
 
 def calculateWageForEvent(hourRate, duration):
-    return '' if hourRate == 0 else '€ {:.2f}'.format(float(hourRate) * float(duration))
+    return None if hourRate == 0 else float(hourRate) * float(duration)
 
 def buildEventDescription(hourRate, duration, conflicts):
     parts = []
     wage = calculateWageForEvent(hourRate, duration)
-    if wage:
-        parts.append(wage)
+    if wage is not None:
+        # Travel allowance covers the round trip (to work and back)
+        travelAllowance = travelAllowancePerKm * singleRideJourneyKm * 2
+        parts.append('Salary: € {:.2f}'.format(wage))
+        if travelAllowance:
+            parts.append('Allowance: € {:.2f}'.format(travelAllowance))
+            parts.append('Total: € {:.2f}'.format(wage + travelAllowance))
     if conflicts:
         conflict_parts = []
         for field, period in conflicts:
@@ -286,6 +291,10 @@ if __name__ == "__main__":
         eventSummary = os.getenv('event_summary')
         global eventLocation
         eventLocation = os.getenv('event_location')
+        global travelAllowancePerKm
+        travelAllowancePerKm = float(os.getenv('travel_allowance_per_km') or 0)
+        global singleRideJourneyKm
+        singleRideJourneyKm = float(os.getenv('single_ride_journey_km') or 0)
 
         # Setup the Google Calendar service
         service = setupGoogleCalendar()
