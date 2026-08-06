@@ -4,12 +4,13 @@ import pytz
 
 import config
 from events import getRateForShift, buildEventDescription, buildShiftUid
+from geocoding import getLocationCoordinates, roundCoordinates
 
 
 def saveToICloudCalendar(convertedSchedule):
     # Imported lazily so caldav is only required when iCloud is actually configured
     import caldav
-    from icalendar import Calendar as ICalendar, Event as IEvent
+    from icalendar import Calendar as ICalendar, Event as IEvent, vUri
 
     client = caldav.DAVClient(url='https://caldav.icloud.com', username=config.icloudUsername, password=config.icloudAppPassword)
     principal = client.principal()
@@ -58,8 +59,7 @@ def saveToICloudCalendar(convertedSchedule):
         vevent.add('dtstamp', datetime.now(pytz.timezone(config.eventTimezone)))
         if description:
             vevent.add('description', description)
-        if config.eventLocation:
-            vevent.add('location', config.eventLocation)
+        addLocation(vevent, vUri)
         cal.add_component(vevent)
         ical = cal.to_ical()
 
@@ -70,6 +70,44 @@ def saveToICloudCalendar(convertedSchedule):
         else:
             calendar.save_event(ical)
             print('iCloud event created: %s' % uid)
+
+
+def parseGeoUri(value):
+    """Return the rounded (latitude, longitude) of a 'geo:' URI, or None when it is not one."""
+    if not value or not value.startswith('geo:'):
+        return None
+    try:
+        # A geo URI may carry parameters (';u=35'), the coordinates come first
+        latitude, longitude = value[len('geo:'):].split(';')[0].split(',')
+    except ValueError:
+        return None
+    try:
+        return roundCoordinates((float(latitude), float(longitude)))
+    except ValueError:
+        return None
+
+
+def addLocation(vevent, vUri):
+    """Add the location to the event. A plain LOCATION line is only shown as text by Apple
+    Calendar; it needs X-APPLE-STRUCTURED-LOCATION with coordinates to resolve the address
+    into a real place with a map and travel time."""
+    if not config.eventLocation:
+        return
+
+    vevent.add('location', config.eventLocation)
+
+    coordinates = getLocationCoordinates()
+    if coordinates is None:
+        return
+
+    vevent.add('geo', coordinates)
+    vevent.add('x-apple-structured-location', vUri('geo:{:.6f},{:.6f}'.format(*coordinates)), parameters={
+        'VALUE': 'URI',
+        'X-ADDRESS': config.eventLocation,
+        'X-APPLE-RADIUS': str(config.APPLE_LOCATION_RADIUS_METERS),
+        'X-APPLE-REFERENCEFRAME': '1',
+        'X-TITLE': config.eventLocationTitle or config.eventLocation,
+    })
 
 
 def icloudEventMatches(existing, eventStart, eventEnd, description):
@@ -103,4 +141,5 @@ def icloudEventMatches(existing, eventStart, eventEnd, description):
         and moment('DTEND') == wallClock(eventEnd)
         and field('DESCRIPTION') == (description or '')
         and field('LOCATION') == (config.eventLocation or '')
+        and parseGeoUri(field('X-APPLE-STRUCTURED-LOCATION')) == roundCoordinates(getLocationCoordinates())
     )

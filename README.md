@@ -48,8 +48,16 @@ manus_password=''
 
 event_summary=''
 event_location=''
+event_location_title=''
 event_timezone=''
 ```
+
+`event_location` is the full address shown on the event, so include the city and country.
+Apple Calendar only turns an address into a real place with a map pin and travel time when
+the event carries coordinates, so the script geocodes `event_location` through OpenStreetMap
+once per run (no API key needed) and attaches the result. If the address cannot be resolved
+the location is still added as plain text. The optional `event_location_title` is the short
+name Apple Calendar displays for the place, e.g. `X-street 1`.
 
 ### Step 4: Set up Google Cloud Application
 
