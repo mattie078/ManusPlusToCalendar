@@ -1,37 +1,62 @@
 from datetime import datetime, timedelta
-import os
 
 import requests
 import pytz
 
-import config
+from . import config
+
+API_HOST = 'https://server.manus.plus'
+REQUEST_TIMEOUT_SECONDS = 30
+
+
+def apiUrl(path):
+    return '%s/%s%s' % (API_HOST, config.companyName, path)
 
 
 def getBearerToken():
     data = {
         'client_id': 'employee',
         'grant_type': 'password',
-        'username': os.getenv('manus_username'),
-        'password': os.getenv('manus_password'),
+        'username': config.manusUsername,
+        'password': config.manusPassword,
     }
 
-    response = requests.post('https://server.manus.plus/' + os.getenv('company_name') + '/app/token', data=data)
+    try:
+        response = requests.post(apiUrl('/app/token'), data=data, timeout=REQUEST_TIMEOUT_SECONDS)
+    except requests.RequestException as error:
+        raise Exception(
+            "Could not reach MyManus at %s: %s\n"
+            "Check your connection and that company_name in .env is correct." % (API_HOST, error)
+        )
 
     if response.status_code == 200:
-        # Assuming the response contains a JSON object with the token
-        token_data = response.json()
-        return token_data['access_token']
-    else:
-        # Handle errors
-        raise Exception(f"Failed to get token: {response.status_code}, {response.text}")
+        return response.json()['access_token']
+
+    if response.status_code in (400, 401):
+        raise Exception(
+            "MyManus rejected the login (%s).\n"
+            "Check manus_username and manus_password in .env. If you have left the "
+            "company, the account may be deactivated.\n"
+            "Server said: %s" % (response.status_code, response.text)
+        )
+
+    raise Exception(f"Failed to get token: {response.status_code}, {response.text}")
 
 
 def getUserInformation(token):
     headers = {
         'authorization': 'Bearer '+token,
     }
-    response = requests.get('https://server.manus.plus/' + os.getenv('company_name') + '/api/user/me', headers=headers)
+    response = requests.get(apiUrl('/api/user/me'), headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
     information_data = response.json()
+
+    # The API returns JSON for errors too, so check before indexing
+    if 'nodeId' not in information_data or 'employeeId' not in information_data:
+        raise Exception(
+            "MyManus did not return the expected account details, which usually "
+            "means the account has no active contract.\n"
+            "Server said: %s" % information_data
+        )
 
     config.nodeId = information_data['nodeId']
     config.employeeId = information_data['employeeId']
@@ -62,8 +87,9 @@ def getWorkweeks(token, week_amount):
         year, week, _ = adjusted_date.isocalendar()
 
         response = requests.get(
-            f'https://server.manus.plus/{os.getenv("company_name")}/api/node/{config.nodeId}/employee/{config.employeeId}/schedule/{year}/{week}/fromData',
+            apiUrl(f'/api/node/{config.nodeId}/employee/{config.employeeId}/schedule/{year}/{week}/fromData'),
             headers=headers,
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         weekData = response.json()
 
@@ -82,6 +108,9 @@ def getWorkweeks(token, week_amount):
             config.hourRate = weekContract['hourRate']
         weekSchedule = weekData['schedule']
         for workDay in weekSchedule:
+            # Days not yet published by the employer come back as null
+            if not workDay:
+                continue
             if workDay.get('entries'):
                 for entry in workDay['entries']:
                     conflicts = getAvailabilityConflicts(workDay, entry)
@@ -90,9 +119,16 @@ def getWorkweeks(token, week_amount):
 
 
 def convertSchedule(schedule):
+    """Convert raw MyManus rows into the shift rows both calendar modules index:
+
+        row[0] start ISO string, row[1] end ISO string,
+        row[2] duration in decimal hours, row[3] availability conflicts
+
+    MyManus sends dates as days since 1900-01-01 and times as minutes since midnight.
+    """
     convertedSchedule = []
 
-    # ManusPlus start date
+    # MyManus start date
     start_date = datetime(1900, 1, 1)
 
     # Convert Timezone so it can be used in the datetime object

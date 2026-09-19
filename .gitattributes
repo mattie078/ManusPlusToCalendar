@@ -1,0 +1,5 @@
+# Shell scripts must stay LF, or the hook fails with a "bad interpreter" error.
+* text=auto
+
+.githooks/** text eol=lf
+*.sh text eol=lf

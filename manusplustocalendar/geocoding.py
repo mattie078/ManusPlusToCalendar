@@ -1,16 +1,15 @@
 import requests
 
-import config
+from . import config
 
-# The looked up location is cached so the geocoder is queried once per session instead of
-# once per event. A failed lookup is cached too, so a run never retries a hopeless address.
+# Cached per session so the geocoder is queried once per run instead of once per event.
+# A failed lookup is cached too, so a run never retries a hopeless address.
 cachedAddress = None
 cachedCoordinates = None
 
 
 def getLocationCoordinates():
-    """Return the (latitude, longitude) of the configured event location, or None when it
-    cannot be resolved. The geocoder is only called the first time per session."""
+    """Return the (latitude, longitude) of the configured event location, or None."""
     global cachedAddress, cachedCoordinates
 
     if not config.eventLocation:

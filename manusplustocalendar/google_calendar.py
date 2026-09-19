@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 
@@ -7,30 +8,66 @@ from google.auth.exceptions import RefreshError
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-import config
-from events import getRateForShift, buildEventDescription
+from . import config
+from .events import getRateForShift, buildEventDescription
+
+
+def loadCredentialsSection():
+    """Return the client section of credentials.json, or None if it cannot be read."""
+    try:
+        with open(config.CREDENTIALS_FILE, 'r') as credentialsFile:
+            data = json.load(credentialsFile)
+    except (ValueError, OSError):
+        return None
+    return data.get('installed') or data.get('web') or {}
+
+
+def isGoogleConfigured():
+    """credentials.json ships as a blank template, so its presence proves nothing."""
+    if not os.path.exists(config.CREDENTIALS_FILE):
+        return False
+
+    section = loadCredentialsSection()
+    # Unreadable: report configured so setupGoogleCalendar can explain the problem
+    if section is None:
+        return True
+
+    return bool(str(section.get('client_id') or '').strip())
 
 
 def getGoogleCreds():
     flow = InstalledAppFlow.from_client_secrets_file(
-        "credentials.json", config.SCOPES
+        config.CREDENTIALS_FILE, config.SCOPES
     )
     creds = flow.run_local_server(port=0)
     return creds
 
 
 def setupGoogleCalendar():
-    if not os.path.exists("credentials.json"):
-        raise Exception("No credentials.json file found, please create one and try again.")
+    if not os.path.exists(config.CREDENTIALS_FILE):
+        raise Exception(
+            "No %s found. Download it from the Google Cloud Console and save it "
+            "here. See README.md step 5." % config.CREDENTIALS_FILE
+        )
 
-    with open("credentials.json", "r") as cred_file:
-        if len(cred_file.read()) == 0:
-            raise Exception("The credentials.json file is empty, create your own and try again.")
+    section = loadCredentialsSection()
+    if section is None:
+        raise Exception(
+            "%s is empty or not valid JSON. Replace it with an unedited copy of "
+            "the file downloaded from the Google Cloud Console." % config.CREDENTIALS_FILE
+        )
+
+    if not str(section.get('client_id') or '').strip():
+        raise Exception(
+            "%s is still the blank template. Replace it with the file downloaded "
+            "from the Google Cloud Console, or leave it blank to skip Google "
+            "Calendar. See README.md step 5." % config.CREDENTIALS_FILE
+        )
 
     creds = None
     # Check if token.json exists and load credentials from it
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", config.SCOPES)
+    if os.path.exists(config.TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(config.TOKEN_FILE, config.SCOPES)
 
     # If no valid credentials, start the login flow
     if not creds or not creds.valid:
@@ -44,13 +81,17 @@ def setupGoogleCalendar():
             creds = getGoogleCreds()
 
         # Save the credentials for the next run
-        with open("token.json", "w") as token:
+        with open(config.TOKEN_FILE, "w") as token:
             token.write(creds.to_json())
 
     return build("calendar", "v3", credentials=creds)
 
 
 def saveToGoogleCalendar(service, convertedSchedule):
+    if not convertedSchedule:
+        print('No shifts to sync to Google Calendar.')
+        return
+
     existingEvents = service.events().list(calendarId='primary', timeMin=convertedSchedule[0][0], timeMax=convertedSchedule[-1][1]).execute()
 
     for schedule in convertedSchedule:

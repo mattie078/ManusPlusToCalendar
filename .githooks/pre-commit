@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# Blocks commits that would publish real credentials.
+# Enable once per clone with: git config core.hooksPath .githooks
+#
+# The checker is passed as a file rather than with `python -c`, because on
+# Windows `python` is often a batch shim that mangles multi-line -c arguments.
+
+hookDir=$(dirname "$0")
+checker="$hookDir/check_staged_secrets.py"
+
+PY=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+
+if [ -n "$PY" ] && [ -f "$checker" ]; then
+	"$PY" "$checker"
+	exit $?
+fi
+
+# Without python, fall back to scanning for known secret markers so a broken
+# install downgrades the guard rather than silently disabling it.
+echo "pre-commit: python not found, using reduced credential scan." >&2
+
+fail=0
+for path in $(git diff --cached --name-only --diff-filter=ACM); do
+	case "$path" in
+		token.json|*/token.json|*.pem|*.p12)
+			echo "COMMIT BLOCKED: $path must never be committed." >&2
+			fail=1
+			;;
+		.env|credentials.json)
+			if git show ":$path" | grep -qE "GOCSPX-|apps\.googleusercontent\.com|=[[:space:]]*['\"][^'\"]+['\"]"; then
+				echo "COMMIT BLOCKED: $path appears to contain real values." >&2
+				fail=1
+			fi
+			;;
+	esac
+done
+
+if [ "$fail" -ne 0 ]; then
+	echo "Unstage with 'git reset HEAD <file>', or override with --no-verify." >&2
+	exit 1
+fi
+
+exit 0

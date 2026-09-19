@@ -1,4 +1,17 @@
-.env
-credentials.json
+# .env and credentials.json are tracked on purpose, as blank templates.
+# The pre-commit hook in .githooks/ stops them being committed with real values.
+
+# Written by the Google login flow, contains a live access token
 token.json
+
 *.pyc
+__pycache__/
+
+.venv/
+venv/
+env/
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

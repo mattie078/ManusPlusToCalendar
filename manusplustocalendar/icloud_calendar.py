@@ -2,18 +2,31 @@ from datetime import datetime
 
 import pytz
 
-import config
-from events import getRateForShift, buildEventDescription, buildShiftUid
-from geocoding import getLocationCoordinates, roundCoordinates
+from . import config
+from .events import getRateForShift, buildEventDescription, buildShiftUid
+from .geocoding import getLocationCoordinates, roundCoordinates
 
 
 def saveToICloudCalendar(convertedSchedule):
+    if not convertedSchedule:
+        print('No shifts to sync to iCloud Calendar.')
+        return
+
     # Imported lazily so caldav is only required when iCloud is actually configured
     import caldav
     from icalendar import Calendar as ICalendar, Event as IEvent, vUri
 
     client = caldav.DAVClient(url='https://caldav.icloud.com', username=config.icloudUsername, password=config.icloudAppPassword)
-    principal = client.principal()
+
+    try:
+        principal = client.principal()
+    except Exception as error:
+        # Usually a normal Apple password instead of an app-specific one
+        raise Exception(
+            "Could not sign in to iCloud: %s\n"
+            "icloud_app_password must be an app-specific password from "
+            "https://appleid.apple.com, not your normal Apple password." % error
+        )
 
     calendars = principal.calendars()
     calendar = next((c for c in calendars if c.get_display_name() == config.icloudCalendarName), None)

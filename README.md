@@ -1,103 +1,179 @@
 # ManusPlusToCalendar
 
-ManusPlusToCalendar is a simple Python script that reads your schedule from ManusPlus and syncs it with your Google Calendar. This tool helps streamline the process of managing your schedule by automatically updating your Google Calendar with your ManusPlus workschedule.
+Reads your work schedule from MyManus and writes it into Google Calendar
+and/or Apple (iCloud) Calendar. Run it whenever your rota changes and your
+calendar catches up: new shifts are added, changed shifts are updated in place,
+and nothing is duplicated.
 
 ## Features
 
-- Read schedules from ManusPlus.
-- Sync schedules with Google Calendar.
-- Automatically adds location and money earnt in the description.
-- Simple and easy-to-use script.
+- Reads your schedule from MyManus for the next few weeks.
+- Syncs to Google Calendar, Apple Calendar, or both. Each is optional.
+- Adds your expected pay to the event description, including the Sunday
+  surcharge and an optional travel allowance.
+- Flags shifts that clash with unavailability, illness, holiday or vacation, and
+  colours those events differently.
+- Attaches real coordinates to the location so Apple Calendar shows a map pin
+  and travel time.
+- Safe to re-run: it updates existing events instead of creating duplicates.
 
 ## Prerequisites
 
-Before you can use this script, you'll need:
+- Python 3.9 or newer (developed and verified on 3.12).
+- A MyManus account.
+- For Google Calendar: a Google Cloud project with the Calendar API enabled.
+- For Apple Calendar: an iCloud account with an app-specific password.
 
-- Python 3.x installed on your machine.
-- [A Google Cloud project with Calendar API enabled](#step-4-set-up-google-cloud-application).
-- ManusPlus account credentials.
+You need **at least one** of Google or Apple, but not both.
 
 ## Setup
 
-### Step 1: Clone the repository
-
-Clone this repository to your local machine using:
+### Step 1: Get the code
 
 ```bash
-git clone https://github.com/your-username/ManusPlusToCalendar.git
+git clone https://github.com/mattie078/ManusPlusToCalendar.git
 cd ManusPlusToCalendar
 ```
 
 ### Step 2: Install dependencies
 
-Install the required Python packages using:
-
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 3: Set up environment variables
+### Step 3: Turn on the credential guard
 
-Adjust the `.env` file in the root directory of the project and add your ManusPlus credentials and Google Calendar event details. Use the provided `.env` file as a reference:
-
-```bash
-company_name=''
-
-manus_username=''
-manus_password=''
-
-event_summary=''
-event_location=''
-event_location_title=''
-event_timezone=''
-```
-
-`event_location` is the full address shown on the event, so include the city and country.
-Apple Calendar only turns an address into a real place with a map pin and travel time when
-the event carries coordinates, so the script geocodes `event_location` through OpenStreetMap
-once per run (no API key needed) and attaches the result. If the address cannot be resolved
-the location is still added as plain text. The optional `event_location_title` is the short
-name Apple Calendar displays for the place, e.g. `X-street 1`.
-
-### Step 4: Set up Google Cloud Application
-
-1. Create a new project in the Google Cloud Console (https://console.cloud.google.com/).
-2. Enable the Google Calendar API for your project:
-   - Navigate to the API & Services > Library.
-   - Search for "Google Calendar API" and enable it. (https://console.cloud.google.com/apis/enableflow?apiid=calendar-json.googleapis.com)
-3. Create OAuth 2.0 credentials:
-   - Go to API & Services > Credentials.
-   - Click on Create Credentials and select OAuth 2.0 Client IDs.
-   - Configure the consent screen to your liking.
-   - Download the `credentials.json` file, rename it and place it in the root directory of your project.
-4. Authorize your application:
-   - Run the `main.py` script to prompt the authorization process.
-   - Follow the instructions to authenticate and authorize access to your Google Calendar.
-
-### Step 5: Run the script
-
-After setting up the environment variables and Google Cloud credentials, you can run the script to sync your ManusPlus schedule with Google Calendar:
+This repo keeps `.env` and `credentials.json` in version control as **blank
+templates**, so you can see exactly which values need filling in. The risk is
+that once you fill them in, a routine `git add -A` would publish your password.
+One command per clone prevents that:
 
 ```bash
-python sync_calendar.py
+git config core.hooksPath .githooks
 ```
+
+That enables a pre-commit hook which refuses any commit where those files
+contain real values. As a second layer, also tell git to ignore your local
+edits to them entirely:
+
+```bash
+git update-index --skip-worktree .env credentials.json
+```
+
+> If you ever need to change the *templates* themselves, temporarily undo that
+> with `git update-index --no-skip-worktree .env credentials.json`.
+
+### Step 4: Fill in `.env`
+
+Open `.env` and fill in the values. Every setting is documented in the file
+itself; the required ones are:
+
+| Setting | Meaning |
+| --- | --- |
+| `company_name` | The part of your MyManus web address before `.manus.plus`. For `https://acme.manus.plus` this is `acme`. |
+| `manus_username` | Your MyManus login. |
+| `manus_password` | Your MyManus password. |
+| `event_summary` | The calendar event title, e.g. `Work`. |
+| `event_timezone` | A TZ database name, e.g. `Europe/Amsterdam`. |
+
+Everything below is optional; leave it as `''` to switch the feature off.
+
+| Setting | Meaning |
+| --- | --- |
+| `event_location` | Full address **including city and country**, so it can be resolved to a map pin. |
+| `event_location_title` | Short name Apple Calendar shows for the place, e.g. `Main Street 1`. |
+| `travel_allowance_per_km` | Money reimbursed per kilometre, e.g. `0.23`. |
+| `single_ride_journey_km` | One-way distance to work. The script counts it twice, there and back. |
+| `icloud_username` | Your iCloud email address. |
+| `icloud_app_password` | An **app-specific** password (see step 6). |
+| `icloud_calendar_name` | Which iCloud calendar to write to. Defaults to `Work`. |
+
+The travel allowance only appears when **both** `travel_allowance_per_km` and
+`single_ride_journey_km` are set. The script warns you if only one is filled in.
+
+### Step 5: Google Calendar (optional)
+
+1. Create a project in the [Google Cloud Console](https://console.cloud.google.com/).
+2. [Enable the Google Calendar API](https://console.cloud.google.com/apis/enableflow?apiid=calendar-json.googleapis.com)
+   for that project.
+3. Go to **APIs & Services > Credentials**, click **Create Credentials**, and
+   choose **OAuth 2.0 Client ID**. Pick **Desktop app** as the application type.
+4. Configure the consent screen. While it is in "Testing" mode, add your own
+   Google account under **Test users**, or sign-in will be refused.
+5. Download the client secret JSON, rename it to `credentials.json`, and replace
+   the blank template in this folder.
+6. The first run opens a browser to authorise the app. It then writes
+   `token.json`, which keeps you signed in. That file is git-ignored; delete it
+   if you ever need to sign in as someone else.
+
+To skip Google Calendar entirely, just leave `credentials.json` blank.
+
+### Step 6: Apple / iCloud Calendar (optional)
+
+1. Sign in at [appleid.apple.com](https://appleid.apple.com).
+2. Go to **Sign-In and Security > App-Specific Passwords** and generate one.
+3. Put your iCloud email in `icloud_username` and that generated password in
+   `icloud_app_password`.
+
+Your normal Apple password will **not** work here, and two-factor
+authentication must be enabled on the account for app-specific passwords to
+exist at all.
+
+The calendar named in `icloud_calendar_name` must already exist in Apple
+Calendar; the script will not create it. If the name does not match, the error
+lists the calendars it actually found.
+
+### Step 7: Run it
+
+```bash
+python main.py
+```
+
+You can run this from any directory; it finds its own `.env`.
 
 ## Usage
 
-Ensure your `.env` file and `credentials.json` are correctly set up. Then, simply run the script to update your Google Calendar with your ManusPlus schedule.
+Re-run `python main.py` whenever your rota changes. It is safe to run as often
+as you like:
+
+- A shift that is not in your calendar yet is created.
+- A shift whose time, pay or availability changed is updated in place.
+- A shift that already matches is left alone.
+
+Events are matched by a deterministic ID derived from the shift's start time, so
+re-running never produces duplicates.
 
 ## Troubleshooting
 
-If you encounter any issues, please check the following:
+**`Configuration problem: These required settings are still empty in .env`**
+Exactly what it says: open `.env` and fill in the listed keys.
 
-- Ensure your .env credentials are correct.
-- Verify that the Google Calendar API is enabled for your project and check if the `credentials.json` file is correct.
-- Check for any errors in the terminal output and follow the suggestions provided.
+**`MyManus rejected the login (400)`**
+Check `manus_username` and `manus_password`. If you have left the company, the
+account is probably deactivated, and there is nothing left to sync.
 
-## Contributing
+**`MyManus did not return the expected account details`**
+The login worked but the account has no active contract. Same likely cause.
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+**`No shifts found in the next N weeks`**
+Not an error. There is simply nothing rostered.
+
+**`credentials.json is still the blank template`**
+Replace it with the file downloaded from Google Cloud (step 5), or leave it
+blank to skip Google Calendar.
+
+**`Could not sign in to iCloud`**
+You almost certainly used your normal Apple password instead of an app-specific
+one. See step 6.
+
+**`Token has been expired for too long, please reauthenticate`**
+Normal after a long gap. The script reopens the browser automatically. If it
+loops, delete `token.json` and run again.
+
+**`No coordinates found for ...`**
+The address in `event_location` could not be geocoded. The location is still
+added as plain text. Try including the city and country.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT. See [LICENSE](LICENSE).

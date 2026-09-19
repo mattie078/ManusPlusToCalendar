@@ -1,6 +1,6 @@
 from datetime import datetime
 
-import config
+from . import config
 
 
 def getRateForShift(schedule):
